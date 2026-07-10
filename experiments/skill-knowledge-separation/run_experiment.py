@@ -15,10 +15,7 @@ import time
 
 import yaml
 
-
-def load_config(config_path):
-    with open(config_path, "r") as f:
-        return yaml.safe_load(f)
+from utils import load_config, set_seed, load_model_and_tokenizer, get_layer_module
 
 
 def run_data_preparation(config_path, base_dir):
@@ -31,7 +28,6 @@ def run_data_preparation(config_path, base_dir):
         load_config as load_data_config,
         prepare_gsm8k, prepare_ifeval, prepare_mmlu, prepare_triviaqa,
     )
-    import random
 
     config = load_data_config(config_path)
     cfg_data = config["data"]
@@ -64,8 +60,8 @@ def run_data_preparation(config_path, base_dir):
     return combined_path
 
 
-def run_hidden_state_extraction(config_path, run_id, base_dir, samples_file):
-    """运行隐藏状态提取。"""
+def run_hidden_state_extraction(config_path, run_id, base_dir, samples_file, model=None, tokenizer=None):
+    """运行隐藏状态提取。如果已提供 model/tokenizer，复用以避免重复加载。"""
     print("\n" + "=" * 70)
     print("STEP 2: Hidden State Extraction")
     print("=" * 70)
@@ -76,27 +72,11 @@ def run_hidden_state_extraction(config_path, run_id, base_dir, samples_file):
     results_dir = os.path.join(base_dir, config["output"]["results_dir"], run_id)
     os.makedirs(results_dir, exist_ok=True)
 
-    import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-
-    device = cfg_model.get("device", "cpu")
-
-    # 加载模型
-    print(f"[Model] Loading {cfg_model['name']}...")
-    tokenizer = AutoTokenizer.from_pretrained(cfg_model["name"])
-    model = AutoModelForCausalLM.from_pretrained(
-        cfg_model["name"],
-        torch_dtype=getattr(torch, cfg_model.get("torch_dtype", "float32")),
-    )
-    model.to(device)
-    model.eval()
-
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-        tokenizer.pad_token_id = tokenizer.eos_token_id
-
-    num_layers = model.config.n_layer if hasattr(model.config, "n_layer") else model.config.num_hidden_layers
-    hidden_size = model.config.n_embd if hasattr(model.config, "n_embd") else model.config.hidden_size
+    if model is None or tokenizer is None:
+        model, tokenizer, num_layers, hidden_size = load_model_and_tokenizer(cfg_model)
+    else:
+        num_layers = model.config.n_layer if hasattr(model.config, "n_layer") else model.config.num_hidden_layers
+        hidden_size = model.config.n_embd if hasattr(model.config, "n_embd") else model.config.hidden_size
 
     # 加载样本
     with open(samples_file, "r") as f:
@@ -122,7 +102,7 @@ def run_hidden_state_extraction(config_path, run_id, base_dir, samples_file):
         "results": results,
     }
     with open(output_path, "w") as f:
-        json.dump(output_data, f)
+        json.dump(output_data, f, indent=2)
     print(f"[Save] {output_path}")
 
     # 元信息
@@ -138,7 +118,7 @@ def run_hidden_state_extraction(config_path, run_id, base_dir, samples_file):
             "sample_labels": [r["label"] for r in results],
         }, f, indent=2)
 
-    return output_path
+    return output_path, model, tokenizer
 
 
 def run_probe_training(config_path, run_id, base_dir, hidden_states_path):
@@ -207,12 +187,16 @@ def run_probe_training(config_path, run_id, base_dir, hidden_states_path):
 
 
 def run_ablation(config_path, run_id, base_dir, samples_file, probe_weights_path,
-                 hidden_states_path):
-    """运行消融实验，直接调用 ablation.py 的 run_ablation_experiment。"""
+                 hidden_states_path, model=None, tokenizer=None):
+    """运行消融实验。如果已提供 model/tokenizer，复用以避免重复加载。
+
+    所有 hook 注册使用 try/finally 保证异常时也能 remove，避免静默数据污染。
+    """
     print("\n" + "=" * 70)
     print("STEP 4: Directional Ablation (Experiment 1)")
     print("=" * 70)
 
+    import torch
     from ablation import (
         load_probe_weights, evaluate_benchmark, PerturbationHook,
         ProjectionAblationHook, compute_perturbation_alpha,
@@ -258,24 +242,14 @@ def run_ablation(config_path, run_id, base_dir, samples_file, probe_weights_path
         samples_data = json.load(f)
     samples = samples_data["samples"]
 
-    # 加载模型
-    import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-
-    print(f"[Model] Loading {cfg_model['name']}...")
-    tokenizer = AutoTokenizer.from_pretrained(cfg_model["name"])
-    model = AutoModelForCausalLM.from_pretrained(
-        cfg_model["name"],
-        torch_dtype=getattr(torch, cfg_model.get("torch_dtype", "float32")),
-    )
-    model.to(device)
-    model.eval()
-
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-        tokenizer.pad_token_id = tokenizer.eos_token_id
+    # 加载模型（如果未提供）
+    if model is None or tokenizer is None:
+        model, tokenizer, _, _ = load_model_and_tokenizer(cfg_model)
 
     w_torch = torch.tensor(w_original, dtype=torch.float32).to(device)
+
+    # 获取目标层 module（兼容不同模型架构）
+    layer_module = get_layer_module(model, layer_idx)
 
     ablation_results = {}
 
@@ -294,9 +268,11 @@ def run_ablation(config_path, run_id, base_dir, samples_file, probe_weights_path
     # 知识方向扰动（沿 +w 添加扰动，将表示推向 skill 区域，远离 knowledge 区域）
     print("[Ablation] Knowledge-direction perturbation (push toward skill, away from knowledge)...")
     knowledge_hook = PerturbationHook(w_torch, alpha_scaled)
-    hook_handle = model.transformer.h[layer_idx].register_forward_hook(knowledge_hook)
-    knowledge_metrics, knowledge_preds = evaluate_benchmark(model, tokenizer, samples, cfg_data, cfg_model, device)
-    hook_handle.remove()
+    hook_handle = layer_module.register_forward_hook(knowledge_hook)
+    try:
+        knowledge_metrics, knowledge_preds = evaluate_benchmark(model, tokenizer, samples, cfg_data, cfg_model, device)
+    finally:
+        hook_handle.remove()
     ablation_results["knowledge_ablation"] = {
         "metrics": knowledge_metrics,
         "predictions": [
@@ -309,9 +285,11 @@ def run_ablation(config_path, run_id, base_dir, samples_file, probe_weights_path
     # 技能方向扰动（沿 -w 添加扰动，将表示推向 knowledge 区域，远离 skill 区域）
     print("[Ablation] Skill-direction perturbation (push toward knowledge, away from skill)...")
     skill_hook = PerturbationHook(-w_torch, alpha_scaled)
-    hook_handle = model.transformer.h[layer_idx].register_forward_hook(skill_hook)
-    skill_metrics, skill_preds = evaluate_benchmark(model, tokenizer, samples, cfg_data, cfg_model, device)
-    hook_handle.remove()
+    hook_handle = layer_module.register_forward_hook(skill_hook)
+    try:
+        skill_metrics, skill_preds = evaluate_benchmark(model, tokenizer, samples, cfg_data, cfg_model, device)
+    finally:
+        hook_handle.remove()
     ablation_results["skill_ablation"] = {
         "metrics": skill_metrics,
         "predictions": [
@@ -324,9 +302,11 @@ def run_ablation(config_path, run_id, base_dir, samples_file, probe_weights_path
     # 投影消融（对照：非选择性消融）
     print("[Ablation] Projection ablation (non-selective control)...")
     proj_hook = ProjectionAblationHook(w_torch, strength)
-    hook_handle = model.transformer.h[layer_idx].register_forward_hook(proj_hook)
-    proj_metrics, proj_preds = evaluate_benchmark(model, tokenizer, samples, cfg_data, cfg_model, device)
-    hook_handle.remove()
+    hook_handle = layer_module.register_forward_hook(proj_hook)
+    try:
+        proj_metrics, proj_preds = evaluate_benchmark(model, tokenizer, samples, cfg_data, cfg_model, device)
+    finally:
+        hook_handle.remove()
     ablation_results["projection_ablation"] = {
         "metrics": proj_metrics,
         "predictions": [
@@ -336,7 +316,7 @@ def run_ablation(config_path, run_id, base_dir, samples_file, probe_weights_path
     }
     print(f"  Projection ablation accuracy: {proj_metrics['accuracy']:.4f}")
 
-    # 计算选择性
+    # 计算选择性（compute_selectivity 已修复 inf 截断，JSON 安全）
     selectivity = compute_selectivity(ablation_results)
     print("\n[Selectivity]")
     print(f"  Knowledge-direction selectivity: {selectivity['knowledge_direction_selectivity']:.2f}:1")
@@ -395,6 +375,9 @@ def main():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     config = load_config(args.config)
 
+    # 设置随机种子
+    set_seed(config["data"].get("seed", 42))
+
     # 确定 run_id
     run_id = args.run_id or f"run_{int(time.time())}"
     results_dir = os.path.join(base_dir, config["output"]["results_dir"], run_id)
@@ -414,6 +397,13 @@ def main():
 
     overall_start = time.time()
 
+    # 初始化状态变量（避免 NameError）
+    should_abort_exp0 = False
+    probe_weights_path = None
+    hidden_states_path = None
+    model = None
+    tokenizer = None
+
     # --- Step 1: 数据准备 ---
     samples_file = os.path.join(base_dir, "data", "all_samples.json")
     if args.skip_data_prep and os.path.exists(samples_file):
@@ -425,19 +415,25 @@ def main():
         samples_file = run_data_preparation(args.config, base_dir)
 
     # --- Step 2: 隐藏状态提取 ---
-    # 添加 base_dir 到 sys.path
     sys.path.insert(0, base_dir)
 
     hidden_states_path = os.path.join(results_dir, "hidden_states.json")
     if config["experiment"].get("skip_if_exists") and os.path.exists(hidden_states_path):
         print(f"[Extract] Skipping, using existing: {hidden_states_path}")
     else:
-        hidden_states_path = run_hidden_state_extraction(args.config, run_id, base_dir, samples_file)
+        hidden_states_path, model, tokenizer = run_hidden_state_extraction(
+            args.config, run_id, base_dir, samples_file
+        )
 
     # --- Step 3: 实验0 - 探针训练 ---
     if args.exp_only is not None and args.exp_only != 0:
         print("\n[Skip] Experiment 0 (exp_only=1)")
-        should_abort_exp0 = False
+        # 当 exp_only=1 时，需要从已有结果加载 probe_weights_path
+        probe_weights_path = os.path.join(results_dir, "probe_weights.json")
+        if not os.path.exists(probe_weights_path):
+            print(f"[Error] --exp-only 1 requires existing probe results at {probe_weights_path}")
+            print("        Run with --exp-only 0 first, or without --exp-only to run both.")
+            return
     else:
         should_abort_exp0, probe_weights_path = run_probe_training(
             args.config, run_id, base_dir, hidden_states_path
@@ -450,9 +446,10 @@ def main():
     elif args.exp_only is not None and args.exp_only != 1:
         print("\n[Skip] Experiment 1 (exp_only=0)")
     else:
+        # 如果模型尚未加载，run_ablation 会自动加载
         run_ablation(
             args.config, run_id, base_dir, samples_file, probe_weights_path,
-            hidden_states_path
+            hidden_states_path, model, tokenizer
         )
 
     overall_elapsed = time.time() - overall_start
@@ -467,7 +464,7 @@ def main():
         "run_id": run_id,
         "model": config["model"]["name"],
         "total_elapsed_s": round(overall_elapsed, 1),
-        "exp0_aborted": should_abort_exp0 if 'should_abort_exp0' in dir() else None,
+        "exp0_aborted": should_abort_exp0,
     }
     # 尝试加载各阶段结果
     for filename in ["probe_results.json", "ablation_results.json", "abort_exp0.json", "abort_exp1.json"]:

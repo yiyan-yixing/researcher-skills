@@ -90,13 +90,13 @@ def compare_probes(run1, run2):
             marker = " *" if abs(diff) > 0.05 else "  "
             print(f"{layer:<8} | {acc1:.4f}      | {acc2:.4f}      | {diff:+.4f}{marker}")
         elif acc1 is not None:
-            print(f"{layer:<8} | {acc1:.4f}      | N/A         | —")
+            print(f"{layer:<8} | {acc1:.4f}      | N/A         | ---")
         elif acc2 is not None:
-            print(f"{layer:<8} | N/A         | {acc2:.4f}      | —")
+            print(f"{layer:<8} | N/A         | {acc2:.4f}      | ---")
 
     print("-" * 80)
     print(f"Best Layer: {probe1.get('best_layer', 'N/A')} vs {probe2.get('best_layer', 'N/A')}")
-    print(f"Best Accuracy: {probe1.get('best_cv_accuracy', 'N/A'):.4f} vs {probe2.get('best_cv_accuracy', 'N/A'):.4f}")
+    print(f"Best Accuracy: {probe1.get('best_cv_accuracy', 0):.4f} vs {probe2.get('best_cv_accuracy', 0):.4f}")
 
     if differences:
         print(f"Mean Difference: {np.mean(differences):+.4f}")
@@ -122,32 +122,46 @@ def compare_ablations(run1, run2):
     sel1 = abl1.get("selectivity", {})
     sel2 = abl2.get("selectivity", {})
 
+    def fmt(val, width=15):
+        """Format a value for the comparison table."""
+        if isinstance(val, float):
+            return f"{val:.4f}".ljust(width)
+        return str(val).ljust(width)
+
     # 基线对比
     print(f"\n{'Metric':<35} | {model1:<20} | {model2:<20}")
     print("-" * 80)
-    print(f"{'Baseline Skill Acc':<35} | {sel1.get('baseline_skill_acc', 0):.4f}{'':<15} | {sel2.get('baseline_skill_acc', 0):.4f}{'':<15}")
-    print(f"{'Baseline Knowledge Acc':<35} | {sel1.get('baseline_knowledge_acc', 0):.4f}{'':<15} | {sel2.get('baseline_knowledge_acc', 0):.4f}{'':<15}")
+    print(f"{'Baseline Skill Acc':<35} | {fmt(sel1.get('baseline_skill_acc', 0)):<20} | {fmt(sel2.get('baseline_skill_acc', 0))}")
+    print(f"{'Baseline Knowledge Acc':<35} | {fmt(sel1.get('baseline_knowledge_acc', 0)):<20} | {fmt(sel2.get('baseline_knowledge_acc', 0))}")
 
-    print(f"\n{'Knowledge Ablation:':<35}")
+    print(f"\n{'Knowledge Perturbation:':<35}")
     ka1 = sel1.get("knowledge_ablation", {})
     ka2 = sel2.get("knowledge_ablation", {})
-    print(f"{'  Skill Damage':<35} | {ka1.get('skill_damage', 0):.4f}{'':<15} | {ka2.get('skill_damage', 0):.4f}{'':<15}")
-    print(f"{'  Knowledge Damage':<35} | {ka1.get('knowledge_damage', 0):.4f}{'':<15} | {ka2.get('knowledge_damage', 0):.4f}{'':<15}")
+    print(f"{'  Skill Damage':<35} | {fmt(ka1.get('skill_damage', 0)):<20} | {fmt(ka2.get('skill_damage', 0))}")
+    print(f"{'  Knowledge Damage':<35} | {fmt(ka1.get('knowledge_damage', 0)):<20} | {fmt(ka2.get('knowledge_damage', 0))}")
 
-    print(f"\n{'Skill Ablation:':<35}")
+    print(f"\n{'Skill Perturbation:':<35}")
     sa1 = sel1.get("skill_ablation", {})
     sa2 = sel2.get("skill_ablation", {})
-    print(f"{'  Skill Damage':<35} | {sa1.get('skill_damage', 0):.4f}{'':<15} | {sa2.get('skill_damage', 0):.4f}{'':<15}")
-    print(f"{'  Knowledge Damage':<35} | {sa1.get('knowledge_damage', 0):.4f}{'':<15} | {sa2.get('knowledge_damage', 0):.4f}{'':<15}")
+    print(f"{'  Skill Damage':<35} | {fmt(sa1.get('skill_damage', 0)):<20} | {fmt(sa2.get('skill_damage', 0))}")
+    print(f"{'  Knowledge Damage':<35} | {fmt(sa1.get('knowledge_damage', 0)):<20} | {fmt(sa2.get('knowledge_damage', 0))}")
+
+    # 投影消融对照
+    pa1 = sel1.get("projection_ablation", {})
+    pa2 = sel2.get("projection_ablation", {})
+    if pa1 or pa2:
+        print(f"\n{'Projection Ablation (Control):':<35}")
+        print(f"{'  Skill Damage':<35} | {fmt(pa1.get('skill_damage', 0)):<20} | {fmt(pa2.get('skill_damage', 0))}")
+        print(f"{'  Knowledge Damage':<35} | {fmt(pa1.get('knowledge_damage', 0)):<20} | {fmt(pa2.get('knowledge_damage', 0))}")
 
     print(f"\n{'Selectivity Ratios:':<35}")
-    print(f"{'  Knowledge-dir Selectivity':<35} | {sel1.get('knowledge_direction_selectivity', 0):.2f}:1{'':<12} | {sel2.get('knowledge_direction_selectivity', 0):.2f}:1{'':<12}")
-    print(f"{'  Skill-dir Selectivity':<35} | {sel1.get('skill_direction_selectivity', 0):.2f}:1{'':<12} | {sel2.get('skill_direction_selectivity', 0):.2f}:1{'':<12}")
+    print(f"{'  Knowledge-dir Selectivity':<35} | {sel1.get('knowledge_direction_selectivity', 0):.2f}:1".ljust(57) + f"| {sel2.get('knowledge_direction_selectivity', 0):.2f}:1")
+    print(f"{'  Skill-dir Selectivity':<35} | {sel1.get('skill_direction_selectivity', 0):.2f}:1".ljust(57) + f"| {sel2.get('skill_direction_selectivity', 0):.2f}:1")
 
     # Abort status
     print(f"\n{'Abort Status:':<35}")
-    print(f"{'  Exp0 Aborted':<35} | {str(abl1.get('exp0_aborted', 'N/A')):<20} | {str(abl2.get('exp0_aborted', 'N/A')):<20}")
-    print(f"{'  Exp1 Aborted':<35} | {str(abl1.get('aborted', 'N/A')):<20} | {str(abl2.get('aborted', 'N/A')):<20}")
+    print(f"{'  Exp0 Aborted':<35} | {str(abl1.get('exp0_aborted', 'N/A')):<20} | {str(abl2.get('exp0_aborted', 'N/A'))}")
+    print(f"{'  Exp1 Aborted':<35} | {str(abl1.get('aborted', 'N/A')):<20} | {str(abl2.get('aborted', 'N/A'))}")
 
 
 def main():

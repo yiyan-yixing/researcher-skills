@@ -7,11 +7,11 @@
 核心思路：
   探针权重 w 指向 skill 方向（正类），-w 指向 knowledge 方向。
 
-  知识方向消融（损伤知识任务，保留技能任务）：
+  知识方向扰动（损伤知识任务，保留技能任务）：
     沿 w 方向添加扰动，将表示推向 skill 区域，远离 knowledge 区域
     h' = h + strength * alpha * w_hat（w_hat = w / ||w||）
 
-  技能方向消融（损伤技能任务，保留知识任务）：
+  技能方向扰动（损伤技能任务，保留知识任务）：
     沿 -w 方向添加扰动，将表示推向 knowledge 区域，远离 skill 区域
     h' = h - strength * alpha * w_hat
 
@@ -27,20 +27,38 @@
 """
 
 import argparse
-import copy
 import json
+import logging
+import math
 import os
+import re
 import time
 
 import numpy as np
 import torch
-import yaml
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from utils import load_config, load_model_and_tokenizer, get_layer_module
 
-def load_config(config_path):
-    with open(config_path, "r") as f:
-        return yaml.safe_load(f)
+logger = logging.getLogger(__name__)
+
+# JSON 不支持 inf/nan，选择性指标超过此上限时截断为有限值
+_SELECTIVITY_CAP = 9999.0
+
+# IFEval instruction_id 类型路由映射表
+# 将 IFEval 的 instruction_id（":"前的部分）映射到内部约束路由名
+# 避免子串匹配误判（如 "keywords:..." 中的 "word" 匹配到字数分支）
+_IFEVAL_TYPE_ROUTES = {
+    "keyword": "keyword",
+    "keywords": "keyword",
+    "length_constraint": "length",
+    "change_case": "case",
+    "capitalization": "case",
+    "startend": "startend",
+    "detectable_format": "format",
+    "punctuation": "punctuation",
+    "combination": "combination",
+    "comma": "comma",
+}
 
 
 def load_probe_weights(probe_weights_path, layer_idx):
@@ -64,24 +82,21 @@ class PerturbationHook:
     def __init__(self, direction, alpha):
         """
         direction: torch.Tensor (hidden_size,)
-            扰动方向（单位向量或任意向量，会自动归一化）
+            扰动方向向量，会自动归一化
         alpha: float
             扰动幅度（方向已归一化，alpha 控制绝对大小）
         """
-        # 归一化方向
         self.direction_norm = torch.norm(direction).item()
+        assert self.direction_norm > 0, "Perturbation direction must be non-zero"
         self.direction_hat = direction / self.direction_norm
         self.alpha = alpha
 
     def __call__(self, module, input, output):
         # output 是一个 tuple: (hidden_states, ...)
-        # 对于 GPT-2, output[0] 的 shape = (batch, seq_len, hidden_size)
         hidden_states = output[0]
 
         # 对每个 token 的隐藏状态添加扰动
         # h' = h + alpha * direction_hat
-        # 只对最后一个 token 添加扰动（代表对整个输入的编码）
-        # 实际上对所有 token 添加更符合模型推理的物理过程
         perturbation = self.alpha * self.direction_hat.unsqueeze(0).unsqueeze(0)
         perturbed = hidden_states + perturbation
 
@@ -101,6 +116,7 @@ class ProjectionAblationHook:
         self.ablation_direction = direction
         self.strength = strength
         self.direction_norm_sq = torch.dot(direction, direction).item()
+        assert self.direction_norm_sq > 0, "Projection ablation direction must be non-zero"
 
     def __call__(self, module, input, output):
         hidden_states = output[0]
@@ -146,6 +162,10 @@ def evaluate_benchmark(model, tokenizer, samples, cfg_data, cfg_model, device):
     """
     评估模型在给定 benchmark 上的性能。
 
+    每个样本独立 try/except，单个样本失败不会导致整个评估中止。
+    失败样本记录为 incorrect 并计入 total。
+    连续失败超过阈值时提前终止，避免大量无用 OOM 重试。
+
     返回:
         metrics: dict 包含准确率等指标
         predictions: list of dict 包含每个样本的预测
@@ -155,48 +175,83 @@ def evaluate_benchmark(model, tokenizer, samples, cfg_data, cfg_model, device):
     correct = 0
     total = 0
     predictions = []
+    failed_samples = []
+    consecutive_failures = 0
+    max_consecutive_failures = 5
 
     for sample in samples:
+        sample_id = sample["id"]
         input_text = sample["input_text"]
         answer = sample["answer"]
         benchmark = sample["benchmark"]
 
-        inputs = tokenizer(
-            input_text,
-            return_tensors="pt",
-            max_length=max_length,
-            truncation=True,
-            padding=False,
-        )
-        inputs = {k: v.to(device) for k, v in inputs.items()}
-
-        with torch.no_grad():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=20,
-                do_sample=False,
-                pad_token_id=tokenizer.pad_token_id,
+        try:
+            inputs = tokenizer(
+                input_text,
+                return_tensors="pt",
+                max_length=max_length,
+                truncation=True,
+                padding=False,
             )
+            inputs = {k: v.to(device) for k, v in inputs.items()}
 
-        # 解码生成的文本（去掉输入部分）
-        generated_ids = outputs[0][inputs["input_ids"].shape[1]:]
-        generated_text = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
+            with torch.no_grad():
+                outputs = model.generate(
+                    **inputs,
+                    max_new_tokens=64,
+                    do_sample=False,
+                    pad_token_id=tokenizer.pad_token_id,
+                )
 
-        # 评估正确性
-        is_correct = check_answer(benchmark, generated_text, answer, sample)
+            # 解码生成的文本（去掉输入部分）
+            generated_ids = outputs[0][inputs["input_ids"].shape[1]:]
+            generated_text = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
 
-        predictions.append({
-            "id": sample["id"],
-            "benchmark": benchmark,
-            "category": sample["category"],
-            "generated": generated_text,
-            "expected": answer,
-            "correct": is_correct,
-        })
+            # 评估正确性
+            is_correct = check_answer(benchmark, generated_text, answer, sample)
 
-        if is_correct:
-            correct += 1
-        total += 1
+            predictions.append({
+                "id": sample_id,
+                "benchmark": benchmark,
+                "category": sample["category"],
+                "generated": generated_text,
+                "expected": answer,
+                "correct": is_correct,
+                "error": None,
+            })
+
+            if is_correct:
+                correct += 1
+            total += 1
+            consecutive_failures = 0
+
+        except Exception as e:
+            # 单样本失败：记录错误，标记为 incorrect，继续评估
+            consecutive_failures += 1
+            logger.warning(f"Sample {sample_id} ({benchmark}) failed: {e}")
+            failed_samples.append({"id": sample_id, "benchmark": benchmark, "error": str(e)})
+            predictions.append({
+                "id": sample_id,
+                "benchmark": benchmark,
+                "category": sample["category"],
+                "generated": None,
+                "expected": answer,
+                "correct": False,
+                "error": str(e),
+            })
+            total += 1
+
+            # 连续失败过多时提前终止（如 CUDA OOM 会连续失败）
+            if consecutive_failures >= max_consecutive_failures:
+                logger.error(
+                    f"{max_consecutive_failures} consecutive sample failures, "
+                    f"aborting evaluation (likely systemic issue like OOM)"
+                )
+                # 将剩余样本标记为 skipped
+                remaining_ids = [s["id"] for s in samples[len(predictions):]]
+                if remaining_ids:
+                    logger.warning(f"Skipping {len(remaining_ids)} remaining samples")
+                break
 
     accuracy = correct / total if total > 0 else 0
     metrics = {
@@ -204,6 +259,9 @@ def evaluate_benchmark(model, tokenizer, samples, cfg_data, cfg_model, device):
         "correct": correct,
         "total": total,
     }
+    if failed_samples:
+        metrics["failed_samples"] = len(failed_samples)
+        logger.warning(f"evaluate_benchmark: {len(failed_samples)}/{len(samples)} samples failed")
 
     return metrics, predictions
 
@@ -217,7 +275,11 @@ def check_answer(benchmark, generated, expected, sample):
     - MMLU: 提取选项字母 A/B/C/D
     - TriviaQA: 模糊匹配答案关键词
     """
-    generated_lower = generated.lower().strip()
+    if generated is None:
+        return False
+
+    generated_stripped = generated.strip()
+    generated_lower = generated_stripped.lower()
     expected_lower = str(expected).lower().strip()
 
     if benchmark == "gsm8k":
@@ -226,54 +288,148 @@ def check_answer(benchmark, generated, expected, sample):
             # expected 格式: "....#### 18"
             expected_num = expected.split("####")[-1].strip()
             expected_num = expected_num.replace(",", "")
+            expected_float = float(expected_num)
             # 从生成中提取数字
-            import re
-            nums = re.findall(r'-?\d+\.?\d*', generated_lower)
+            nums = re.findall(r'-?\d+\.?\d*', generated_stripped)
             if nums:
                 predicted_num = nums[-1].replace(",", "")
-                return predicted_num == expected_num
+                predicted_float = float(predicted_num)
+                # 数值比较，允许微小误差
+                return abs(predicted_float - expected_float) < max(1e-6, 1e-3 * abs(expected_float))
         except (ValueError, IndexError):
             pass
         return False
 
     elif benchmark == "ifeval":
-        # IFEval: 简化评估 - 检查生成是否为非空
-        # 真正的 IFEval 评估需要检查约束，这里做简化
-        if len(generated.strip()) > 0:
-            return True
-        return False
+        # IFEval: 检查生成的回答是否满足格式约束
+        # 从 sample 中获取 instruction_id（约束类型）
+        instruction_id = sample.get("instruction_id", "")
+        return _check_ifeval_constraint(instruction_id, generated_stripped)
 
     elif benchmark == "mmlu":
         # 提取选项字母
-        import re
-        match = re.search(r'\b([A-D])\b', generated.upper())
+        # 优先匹配 "Answer: X" 格式，然后匹配独立的 A-D
+        match = re.search(r'(?:Answer|answer|Ans|ans)[:\s]*([A-D])', generated_stripped)
+        if not match:
+            match = re.search(r'\b([A-D])\b', generated_stripped.upper())
         if match:
-            predicted_letter = match.group(1)
+            predicted_letter = match.group(1).upper()
             return predicted_letter == expected.upper()
         return False
 
     elif benchmark == "triviaqa":
-        # 模糊匹配：答案关键词出现在生成中
-        if expected_lower in generated_lower:
+        # 模糊匹配：去掉标点后检查子串匹配
+        def normalize(s):
+            return re.sub(r'[^\w\s]', '', s.lower()).strip()
+
+        norm_generated = normalize(generated_stripped)
+        norm_expected = normalize(expected_lower)
+
+        if not norm_expected:
+            return False
+
+        # 检查答案是否出现在生成中
+        if norm_expected in norm_generated:
             return True
-        # 也检查答案的别名
-        # 简化处理：只做子串匹配
+
+        # 检查答案的每个词是否大部分出现
+        expected_words = set(norm_expected.split())
+        generated_words = set(norm_generated.split())
+        overlap = len(expected_words & generated_words)
+        if len(expected_words) > 0 and overlap >= len(expected_words) * 0.5:
+            return True
+
         return False
 
     else:
         return generated_lower == expected_lower
 
 
+def _check_ifeval_constraint(instruction_id, generated):
+    """
+    检查 IFEval 格式约束是否满足。
+
+    instruction_id 标识约束类型，这里实现几个常见检查。
+
+    使用类型映射表路由，避免子串匹配误判。
+    instruction_id 格式为 "type:param"，例如:
+      - "keyword:therefore" / "keywords:existence"
+      - "length_constraint:number_words"
+      - "change_case:lowercase" / "capitalization:lowercase"
+      - "startend:end"
+      - "detectable_format:number_bullet"
+    """
+    if not generated:
+        return False
+
+    constraint_id = str(instruction_id).lower() if instruction_id else ""
+    if not constraint_id:
+        return len(generated.strip()) > 0
+
+    # 按 ":" 分离类型名和参数名
+    constraint_type = constraint_id.split(":")[0] if ":" in constraint_id else constraint_id
+    constraint_param = constraint_id.split(":")[1] if ":" in constraint_id else ""
+
+    # 查映射表获取路由名
+    route = _IFEVAL_TYPE_ROUTES.get(constraint_type, "unknown")
+
+    if route == "length":
+        # 字数限制约束：检查生成是否在合理范围内
+        word_count = len(generated.split())
+        # 放宽标准：只要生成了内容就算通过（GPT-2 很难严格遵循字数约束）
+        return word_count > 0 and word_count < 200
+
+    elif route == "keyword":
+        # 包含关键词：检查 param 指定的关键词是否在生成中
+        if constraint_param:
+            return constraint_param in generated.lower()
+        # fallback: 检查 "therefore"（旧数据兼容）
+        return "therefore" in generated.lower()
+
+    elif route == "case":
+        # 大小写约束：检查全小写
+        return generated == generated.lower()
+
+    elif route == "startend":
+        # 起止格式约束：根据参数检查
+        if constraint_param == "end" or constraint_param == "end_period":
+            return generated.rstrip().endswith(".")
+        # 其他 startend 类型放宽
+        return len(generated.strip()) > 0
+
+    elif route == "format":
+        # 可检测格式约束（number_bullet 等）：放宽标准
+        return len(generated.strip()) > 0
+
+    elif route == "punctuation":
+        # 标点约束：以句号结尾
+        return generated.rstrip().endswith(".")
+
+    elif route == "combination":
+        # 组合约束：放宽标准
+        return len(generated.strip()) > 0
+
+    elif route == "comma":
+        # 不使用逗号
+        return "," not in generated
+
+    else:
+        # 未知约束类型：只检查是否生成了非空内容
+        return len(generated.strip()) > 0
+
+
 def run_ablation_experiment(model, tokenizer, samples, cfg_data, cfg_model, cfg_ablation,
                              probe_weights, layer_idx, device, hidden_states_path):
     """
-    运行消融实验：对比基线、投影消融、和方向性扰动下的性能。
+    运行消融实验：对比基线、方向性扰动、和投影消融下的性能。
 
-    三种条件：
+    四种条件：
     1. 基线（无消融）
     2. 知识方向扰动（沿 w 添加扰动，将表示推向 skill 区域）
     3. 技能方向扰动（沿 -w 添加扰动，将表示推向 knowledge 区域）
     4. 投影消融（移除 w 方向投影，作为非选择性消融的对照）
+
+    所有 hook 注册使用 try/finally 保证异常时也能 remove，避免静默数据污染。
 
     返回:
         ablation_results: dict
@@ -284,10 +440,6 @@ def run_ablation_experiment(model, tokenizer, samples, cfg_data, cfg_model, cfg_
     # 探针在标准化后的特征上训练：X_scaled = (X - mean) / scale
     # 权重向量在标准化空间中: w_scaled
     # 在原始空间中的方向: w_original = w_scaled / scale (element-wise)
-    # 因为 X_scaled @ w_scaled = ((X - mean) / scale) @ w_scaled
-    #                          = (X / scale) @ w_scaled - (mean / scale) @ w_scaled
-    #                          = X @ (w_scaled / scale) - constant
-    # 所以 w_original = w_scaled / scale
     w_original = weight_vector / scaler_scale
 
     # 计算扰动幅度
@@ -297,6 +449,9 @@ def run_ablation_experiment(model, tokenizer, samples, cfg_data, cfg_model, cfg_
 
     # 转为 torch tensor
     w_torch = torch.tensor(w_original, dtype=torch.float32).to(device)
+
+    # 获取目标层 module
+    layer_module = get_layer_module(model, layer_idx)
 
     results = {}
 
@@ -309,7 +464,7 @@ def run_ablation_experiment(model, tokenizer, samples, cfg_data, cfg_model, cfg_
         "metrics": baseline_metrics,
         "predictions": [
             {"id": p["id"], "benchmark": p["benchmark"], "category": p["category"],
-             "correct": p["correct"], "generated": p["generated"]}
+             "correct": p["correct"], "generated": p["generated"] if p["generated"] is not None else ""}
             for p in baseline_preds
         ],
     }
@@ -322,11 +477,13 @@ def run_ablation_experiment(model, tokenizer, samples, cfg_data, cfg_model, cfg_
     # 预期：知识任务受损，技能任务保持
     print("[Ablation] Running knowledge-direction perturbation (push toward skill, away from knowledge)...")
     knowledge_hook = PerturbationHook(w_torch, alpha_scaled)
-    hook_handle_knowledge = model.transformer.h[layer_idx].register_forward_hook(knowledge_hook)
-    knowledge_metrics, knowledge_preds = evaluate_benchmark(
-        model, tokenizer, samples, cfg_data, cfg_model, device
-    )
-    hook_handle_knowledge.remove()
+    hook_handle_knowledge = layer_module.register_forward_hook(knowledge_hook)
+    try:
+        knowledge_metrics, knowledge_preds = evaluate_benchmark(
+            model, tokenizer, samples, cfg_data, cfg_model, device
+        )
+    finally:
+        hook_handle_knowledge.remove()
     results["knowledge_ablation"] = {
         "direction": "knowledge",
         "method": "additive_perturbation",
@@ -336,7 +493,7 @@ def run_ablation_experiment(model, tokenizer, samples, cfg_data, cfg_model, cfg_
         "metrics": knowledge_metrics,
         "predictions": [
             {"id": p["id"], "benchmark": p["benchmark"], "category": p["category"],
-             "correct": p["correct"], "generated": p["generated"]}
+             "correct": p["correct"], "generated": p["generated"] if p["generated"] is not None else ""}
             for p in knowledge_preds
         ],
     }
@@ -348,11 +505,13 @@ def run_ablation_experiment(model, tokenizer, samples, cfg_data, cfg_model, cfg_
     # 预期：技能任务受损，知识任务保持
     print("[Ablation] Running skill-direction perturbation (push toward knowledge, away from skill)...")
     skill_hook = PerturbationHook(-w_torch, alpha_scaled)
-    hook_handle_skill = model.transformer.h[layer_idx].register_forward_hook(skill_hook)
-    skill_metrics, skill_preds = evaluate_benchmark(
-        model, tokenizer, samples, cfg_data, cfg_model, device
-    )
-    hook_handle_skill.remove()
+    hook_handle_skill = layer_module.register_forward_hook(skill_hook)
+    try:
+        skill_metrics, skill_preds = evaluate_benchmark(
+            model, tokenizer, samples, cfg_data, cfg_model, device
+        )
+    finally:
+        hook_handle_skill.remove()
     results["skill_ablation"] = {
         "direction": "skill",
         "method": "additive_perturbation",
@@ -362,7 +521,7 @@ def run_ablation_experiment(model, tokenizer, samples, cfg_data, cfg_model, cfg_
         "metrics": skill_metrics,
         "predictions": [
             {"id": p["id"], "benchmark": p["benchmark"], "category": p["category"],
-             "correct": p["correct"], "generated": p["generated"]}
+             "correct": p["correct"], "generated": p["generated"] if p["generated"] is not None else ""}
             for p in skill_preds
         ],
     }
@@ -370,15 +529,17 @@ def run_ablation_experiment(model, tokenizer, samples, cfg_data, cfg_model, cfg_
           f"({skill_metrics['correct']}/{skill_metrics['total']})")
 
     # 4. 投影消融（对照：非选择性消融）
-    # 移除 w 方向的投影，消除 skill-knowledge 区分信息
+    # 移除 w 方向的投影，消除 skill-knowledge 区别信息
     # 预期：两类任务都受损
     print("[Ablation] Running projection ablation (non-selective control)...")
     proj_hook = ProjectionAblationHook(w_torch, strength)
-    hook_handle_proj = model.transformer.h[layer_idx].register_forward_hook(proj_hook)
-    proj_metrics, proj_preds = evaluate_benchmark(
-        model, tokenizer, samples, cfg_data, cfg_model, device
-    )
-    hook_handle_proj.remove()
+    hook_handle_proj = layer_module.register_forward_hook(proj_hook)
+    try:
+        proj_metrics, proj_preds = evaluate_benchmark(
+            model, tokenizer, samples, cfg_data, cfg_model, device
+        )
+    finally:
+        hook_handle_proj.remove()
     results["projection_ablation"] = {
         "direction": "both",
         "method": "projection_removal",
@@ -387,7 +548,7 @@ def run_ablation_experiment(model, tokenizer, samples, cfg_data, cfg_model, cfg_
         "metrics": proj_metrics,
         "predictions": [
             {"id": p["id"], "benchmark": p["benchmark"], "category": p["category"],
-             "correct": p["correct"], "generated": p["generated"]}
+             "correct": p["correct"], "generated": p["generated"] if p["generated"] is not None else ""}
             for p in proj_preds
         ],
     }
@@ -403,6 +564,11 @@ def compute_selectivity(ablation_results):
 
     选择性 = 知识扰动对知识任务的损伤 / 知识扰动对技能任务的损伤
     (或技能扰动对技能任务的损伤 / 技能扰动对知识任务的损伤)
+
+    当交叉类别损伤趋近零但目标类别损伤 > 0 时，选择性为 inf。
+    由于 JSON 不支持 inf/nan，使用 math.isfinite 检查并截断为 _SELECTIVITY_CAP。
+    负 selectivity（反向选择性）保留原值：语义上表示扰动使交叉类别精度提升，
+    仍可 JSON 序列化（负有限值不触发截断），但需在结果解读时注意。
     """
     # 按类别分组计算准确率
     def category_accuracy(predictions, category):
@@ -466,7 +632,6 @@ def compute_selectivity(ablation_results):
 
     # 选择性损伤比
     # 知识方向扰动：预期 知识损伤 >> 技能损伤
-    # 知识方向扰动将表示推向 skill 区域，knowledge 样本被错误推向 skill 侧
     if knowledge_abl_skill_damage > 1e-6:
         knowledge_selectivity = knowledge_abl_knowledge_damage / knowledge_abl_skill_damage
     else:
@@ -477,6 +642,14 @@ def compute_selectivity(ablation_results):
         skill_selectivity = skill_abl_skill_damage / skill_abl_knowledge_damage
     else:
         skill_selectivity = float("inf") if skill_abl_skill_damage > 0 else 0.0
+
+    # [P0-1 FIX] 截断非有限值为 JSON 安全值
+    # inf 表示"完美选择性"，截断到 _SELECTIVITY_CAP 仍远超任何合理阈值
+    # nan 或负值语义不明，截断为 0（表示"无有效选择性"）
+    if not math.isfinite(knowledge_selectivity):
+        knowledge_selectivity = _SELECTIVITY_CAP if knowledge_selectivity > 0 else 0.0
+    if not math.isfinite(skill_selectivity):
+        skill_selectivity = _SELECTIVITY_CAP if skill_selectivity > 0 else 0.0
 
     selectivity_results["knowledge_direction_selectivity"] = knowledge_selectivity
     selectivity_results["skill_direction_selectivity"] = skill_selectivity
@@ -528,18 +701,7 @@ def main():
     print(f"[Data] Loaded {len(samples)} samples")
 
     # 加载模型
-    print(f"[Model] Loading {cfg_model['name']}...")
-    tokenizer = AutoTokenizer.from_pretrained(cfg_model["name"])
-    model = AutoModelForCausalLM.from_pretrained(
-        cfg_model["name"],
-        torch_dtype=getattr(torch, cfg_model.get("torch_dtype", "float32")),
-    )
-    model.to(device)
-    model.eval()
-
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-        tokenizer.pad_token_id = tokenizer.eos_token_id
+    model, tokenizer, num_layers, hidden_size = load_model_and_tokenizer(cfg_model)
 
     # 确定隐藏状态文件路径
     hidden_states_path = args.hidden_states or os.path.join(results_dir, "hidden_states.json")

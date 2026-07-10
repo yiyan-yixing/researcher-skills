@@ -14,6 +14,7 @@ import numpy as np
 import yaml
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold, train_test_split
+from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 
@@ -58,57 +59,62 @@ def train_probe(X, y, cfg_probe):
     """
     训练线性探针并进行评估。
 
+    使用 Pipeline(StandardScaler + LogisticRegression) 避免数据泄露：
+    - StandardScaler 只在训练集上 fit，然后 transform 验证/测试集
+    - CV 中每个 fold 内独立 fit scaler
+
     返回:
         result: dict 包含各指标
     """
-    # 标准化
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
-    # 先做 train/test split
+    # 先做 train/test split（在原始空间中）
     X_train, X_test, y_train, y_test = train_test_split(
-        X_scaled, y,
+        X, y,
         test_size=cfg_probe.get("test_size", 0.2),
         random_state=cfg_probe.get("random_state", 42),
         stratify=y,
     )
 
-    # 5-fold cross validation on training set
-    cv = StratifiedKFold(n_splits=cfg_probe.get("cv_folds", 5), shuffle=True, random_state=cfg_probe.get("random_state", 42))
+    # 5-fold cross validation on training set, 每个 fold 内独立做 scaler fit
+    cv = StratifiedKFold(n_splits=cfg_probe.get("cv_folds", 5), shuffle=True,
+                         random_state=cfg_probe.get("random_state", 42))
     cv_accuracies = []
 
     for fold_idx, (train_idx, val_idx) in enumerate(cv.split(X_train, y_train)):
         X_fold_train, X_fold_val = X_train[train_idx], X_train[val_idx]
         y_fold_train, y_fold_val = y_train[train_idx], y_train[val_idx]
 
-        clf = LogisticRegression(
+        # Pipeline 确保 scaler 只在 fold 的训练集上 fit
+        pipe = Pipeline([
+            ("scaler", StandardScaler()),
+            ("clf", LogisticRegression(
+                C=cfg_probe.get("C", 1.0),
+                max_iter=cfg_probe.get("max_iter", 1000),
+                random_state=cfg_probe.get("random_state", 42),
+            )),
+        ])
+        pipe.fit(X_fold_train, y_fold_train)
+        acc = pipe.score(X_fold_val, y_fold_val)
+        cv_accuracies.append(acc)
+
+    # 在完整训练集上训练最终模型（Pipeline 确保 scaler 只 fit 训练集）
+    final_pipe = Pipeline([
+        ("scaler", StandardScaler()),
+        ("clf", LogisticRegression(
             C=cfg_probe.get("C", 1.0),
             max_iter=cfg_probe.get("max_iter", 1000),
             random_state=cfg_probe.get("random_state", 42),
-        )
-        clf.fit(X_fold_train, y_fold_train)
-        acc = clf.score(X_fold_val, y_fold_val)
-        cv_accuracies.append(acc)
+        )),
+    ])
+    final_pipe.fit(X_train, y_train)
 
-    # 在完整训练集上训练最终模型
-    final_clf = LogisticRegression(
-        C=cfg_probe.get("C", 1.0),
-        max_iter=cfg_probe.get("max_iter", 1000),
-        random_state=cfg_probe.get("random_state", 42),
-    )
-    final_clf.fit(X_train, y_train)
-
-    test_accuracy = final_clf.score(X_test, y_test)
+    test_accuracy = final_pipe.score(X_test, y_test)
 
     # 获取权重向量
-    # 对于二分类: coef_ shape = (1, n_features)
-    weight_vector = final_clf.coef_[0]
-
-    # 权重方向解释
-    # LogisticRegression 预测 P(y=1|X) = sigmoid(X @ w + b)
-    # y=1 是 skill, y=0 是 knowledge
-    # 所以 weight_vector 指向 "skill 方向"
-    # "知识方向" = -weight_vector (指向 knowledge 类别)
+    # Pipeline 中: scaler 是第一步, clf 是第二步
+    # 权重向量在标准化空间中: clf.coef_[0]
+    # 要在原始空间使用，需要转换: w_original = w_scaled / scale
+    # 这个转换在 ablation.py 中完成
+    weight_vector = final_pipe.named_steps["clf"].coef_[0]
 
     result = {
         "cv_mean_accuracy": float(np.mean(cv_accuracies)),
@@ -116,9 +122,9 @@ def train_probe(X, y, cfg_probe):
         "cv_fold_accuracies": [float(a) for a in cv_accuracies],
         "test_accuracy": float(test_accuracy),
         "weight_vector": weight_vector.tolist(),
-        "intercept": float(final_clf.intercept_[0]),
-        "scaler_mean": scaler.mean_.tolist(),
-        "scaler_scale": scaler.scale_.tolist(),
+        "intercept": float(final_pipe.named_steps["clf"].intercept_[0]),
+        "scaler_mean": final_pipe.named_steps["scaler"].mean_.tolist(),
+        "scaler_scale": final_pipe.named_steps["scaler"].scale_.tolist(),
         "num_train": len(X_train),
         "num_test": len(X_test),
     }

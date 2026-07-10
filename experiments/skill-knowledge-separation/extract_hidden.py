@@ -11,36 +11,8 @@ import os
 import time
 
 import torch
-import yaml
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
-
-def load_config(config_path):
-    with open(config_path, "r") as f:
-        return yaml.safe_load(f)
-
-
-def load_model_and_tokenizer(cfg_model):
-    """加载 HuggingFace 模型和 tokenizer。"""
-    print(f"[Model] Loading {cfg_model['name']}...")
-    tokenizer = AutoTokenizer.from_pretrained(cfg_model["name"])
-    model = AutoModelForCausalLM.from_pretrained(
-        cfg_model["name"],
-        torch_dtype=getattr(torch, cfg_model.get("torch_dtype", "float32")),
-    )
-    model.to(cfg_model.get("device", "cpu"))
-    model.eval()
-
-    # 设置 pad_token
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-        tokenizer.pad_token_id = tokenizer.eos_token_id
-
-    num_layers = model.config.n_layer if hasattr(model.config, "n_layer") else model.config.num_hidden_layers
-    hidden_size = model.config.n_embd if hasattr(model.config, "n_embd") else model.config.hidden_size
-
-    print(f"[Model] Loaded: {cfg_model['name']}, {num_layers} layers, hidden_size={hidden_size}")
-    return model, tokenizer, num_layers, hidden_size
+from utils import load_config, load_model_and_tokenizer, set_seed
 
 
 def extract_hidden_states(model, tokenizer, samples, cfg_data, cfg_model):
@@ -48,7 +20,7 @@ def extract_hidden_states(model, tokenizer, samples, cfg_data, cfg_model):
     对每个样本提取每层最后一个 token 的隐藏状态。
 
     返回:
-        results: list of dict, 每个 dict 包含样本 id、benchmark、label、每层隐藏状态(numpy)
+        results: list of dict, 每个 dict 包含样本 id、benchmark、label、每层隐藏状态
     """
     device = cfg_model.get("device", "cpu")
     max_length = cfg_data.get("max_input_length", 512)
@@ -80,10 +52,8 @@ def extract_hidden_states(model, tokenizer, samples, cfg_data, cfg_model):
 
         layer_hidden = {}
         for layer_idx in range(num_layers):
-            # layer_idx 0 对应 embedding 层, 从 1 开始是 transformer 层
-            # 但 hidden_states[0] 是 embedding 层输出
+            # hidden_states[0] 是 embedding 层输出
             # hidden_states[1] 到 hidden_states[num_layers] 是各 transformer 层
-            # 我们用 layer_idx 从 0 开始计数 transformer 层
             hs = hidden_states[layer_idx + 1]  # 跳过 embedding 层
             last_token_hidden = hs[0, last_token_idx, :].detach().cpu().tolist()
             layer_hidden[str(layer_idx)] = last_token_hidden
@@ -114,6 +84,9 @@ def main():
     cfg_model = config["model"]
     cfg_data = config["data"]
 
+    # 设置随机种子
+    set_seed(cfg_data.get("seed", 42))
+
     # 确定 run_id 和输出目录
     base_dir = os.path.dirname(os.path.abspath(__file__))
     run_id = args.run_id or f"run_{int(time.time())}"
@@ -140,7 +113,6 @@ def main():
 
     # 保存结果
     output_path = os.path.join(results_dir, "hidden_states.json")
-    # 添加模型元信息
     output_data = {
         "model": cfg_model["name"],
         "num_layers": num_layers,
@@ -150,23 +122,22 @@ def main():
         "results": results,
     }
     with open(output_path, "w") as f:
-        json.dump(output_data, f)
+        json.dump(output_data, f, indent=2)
     print(f"[Save] Hidden states saved to {output_path}")
 
-    # 如果隐藏状态太大，也保存一个精简版（不含隐藏状态向量，仅元信息）
-    if config["output"].get("save_hidden_states", True):
-        meta_path = os.path.join(results_dir, "hidden_states_meta.json")
-        meta_data = {
-            "model": cfg_model["name"],
-            "num_layers": num_layers,
-            "hidden_size": hidden_size,
-            "num_samples": len(results),
-            "sample_ids": [r["id"] for r in results],
-            "sample_benchmarks": [r["benchmark"] for r in results],
-            "sample_labels": [r["label"] for r in results],
-        }
-        with open(meta_path, "w") as f:
-            json.dump(meta_data, f, indent=2)
+    # 精简版元信息
+    meta_path = os.path.join(results_dir, "hidden_states_meta.json")
+    meta_data = {
+        "model": cfg_model["name"],
+        "num_layers": num_layers,
+        "hidden_size": hidden_size,
+        "num_samples": len(results),
+        "sample_ids": [r["id"] for r in results],
+        "sample_benchmarks": [r["benchmark"] for r in results],
+        "sample_labels": [r["label"] for r in results],
+    }
+    with open(meta_path, "w") as f:
+        json.dump(meta_data, f, indent=2)
 
     return output_path
 
