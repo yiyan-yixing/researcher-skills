@@ -1,0 +1,78 @@
+# =============================================================================
+# LLM 技能/知识表示分离验证实验 - 配置文件
+# =============================================================================
+
+# --- 模型配置 ---
+model:
+  name: "gpt2"                    # HuggingFace model id (gpt2 = 124M)
+  # name: "meta-llama/Llama-2-7b-hf"  # 实验2预留
+  device: "cpu"                   # "cpu" or "cuda"
+  torch_dtype: "float32"          # "float32" or "float16"
+
+# --- 数据配置 ---
+data:
+  num_samples: 100                # 每个 mini-benchmark 采样题数
+  seed: 42                        # 采样随机种子
+  max_input_length: 512           # 输入最大 token 数
+  # GSM8K
+  gsm8k:
+    dataset_name: "gsm8k"
+    subset: "main"
+    split: "test"
+  # MMLU
+  mmlu:
+    dataset_name: "cais/mmlu"
+    subset: "all"
+    split: "test"
+    subjects: null                 # null = 随机采样所有科目; 或指定列表如 ["abstract_algebra", "anatomy"]
+  # TriviaQA
+  triviaqa:
+    dataset_name: "trivia_qa"
+    subset: "rc.nocontext"
+    split: "validation"
+  # IFEval (构造式)
+  ifeval:
+    dataset_name: "google/IFEval"
+    split: "train"
+    # 格式指令列表
+    constraints:
+      - "Answer in at most 50 words"
+      - "Include the keyword 'therefore' in your answer"
+      - "End your answer with a period"
+      - "Do not use any commas"
+      - "Write your response in all lowercase"
+
+# --- 探针配置 ---
+probe:
+  type: "logistic_regression"
+  C: 1.0                          # LogisticRegression 正则化参数
+  max_iter: 1000
+  cv_folds: 5                     # cross-validation 折数
+  test_size: 0.2                  # hold-out test 比例
+  random_state: 42
+
+# --- 消融配置 ---
+ablation:
+  # 在哪个层做消融 (取探针表现最好的层)
+  layer_selection: "best_probe"    # "best_probe" = 自动选择探针准确率最高的层; 或指定整数如 8
+  # 消融强度 (1.0 = 完全移除方向分量)
+  strength: 1.0
+  # 评估时的 batch size
+  eval_batch_size: 8
+
+# --- 实验流程控制 ---
+experiment:
+  run_exp0: true                   # 运行实验0：探针可行性
+  run_exp1: true                   # 运行实验1：选择性损伤验证
+  skip_if_exists: false            # 如果结果文件已存在是否跳过
+
+# --- 输出配置 ---
+output:
+  results_dir: "results"           # 相对于脚本目录
+  save_hidden_states: true         # 是否保存提取的隐藏状态 (可能较大)
+  save_predictions: true           # 是否保存模型预测结果
+
+# --- 放弃条件 ---
+abort_criteria:
+  exp0_min_accuracy: 0.60          # 实验0：所有层探针准确率 < 60% 则放弃
+  exp1_min_selectivity: 2.0        # 实验1：选择性损伤比 < 2:1 则放弃

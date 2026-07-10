@@ -10,3 +10,13 @@ build/
 models/
 data/raw/
 data/processed/
+
+# Python cache
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Experiment results (keep structure, ignore data)
+experiments/*/results/run_*/
+experiments/*/data/*.json
+experiments/*/data/*.tsv
