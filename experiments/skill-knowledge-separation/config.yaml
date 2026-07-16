@@ -4,14 +4,14 @@
 
 # --- 模型配置 ---
 model:
-  name: "gpt2"                    # HuggingFace model id (gpt2 = 124M)
-  # name: "meta-llama/Llama-2-7b-hf"  # 实验2预留
-  device: "cpu"                   # "cpu" or "cuda"
-  torch_dtype: "float32"          # "float32" or "float16"
+  name: "Qwen/Qwen2.5-3B"         # 3B 模型，期望出现功能分化
+  # name: "gpt2"                     # 实验1: GPT-2 (124M) — 结果: 无分离
+  device: "cpu"                     # "cpu" or "mps" (M系列芯片可用mps加速)
+  torch_dtype: "float16"           # float16 节省内存，3B约6GB
 
 # --- 数据配置 ---
 data:
-  num_samples: 100                # 每个 mini-benchmark 采样题数
+  num_samples: 50                 # 每个 mini-benchmark 采样题数 (3B模型减半加速)
   seed: 42                        # 采样随机种子
   max_input_length: 512           # 输入最大 token 数
   # GSM8K
@@ -55,8 +55,8 @@ probe:
 ablation:
   # 在哪个层做消融 (取探针表现最好的层)
   layer_selection: "best_probe"    # "best_probe" = 自动选择探针准确率最高的层; 或指定整数如 8
-  # 消融强度 (1.0 = 完全移除方向分量)
-  strength: 1.0
+  # 消融强度 (需要足够大以影响输出; GPT-2需要50-200，3B模型可能需要不同值)
+  strength: 50.0
   # 评估时的 batch size
   eval_batch_size: 8
 

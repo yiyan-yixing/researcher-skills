@@ -6,7 +6,7 @@ set -e
 # 研究员技能包交互式初始化
 # ============================================================
 
-TARGET_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TARGET_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # 支持环境变量预填（非交互模式）
 # RESEARCHER_NAME=张三 RESEARCH_FIELD=NLP bash init.sh

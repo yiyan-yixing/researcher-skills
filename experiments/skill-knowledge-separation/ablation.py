@@ -283,28 +283,24 @@ def check_answer(benchmark, generated, expected, sample):
     expected_lower = str(expected).lower().strip()
 
     if benchmark == "gsm8k":
-        # 从答案中提取最终数字
-        try:
-            # expected 格式: "....#### 18"
-            expected_num = expected.split("####")[-1].strip()
-            expected_num = expected_num.replace(",", "")
-            expected_float = float(expected_num)
-            # 从生成中提取数字
-            nums = re.findall(r'-?\d+\.?\d*', generated_stripped)
-            if nums:
-                predicted_num = nums[-1].replace(",", "")
-                predicted_float = float(predicted_num)
-                # 数值比较，允许微小误差
-                return abs(predicted_float - expected_float) < max(1e-6, 1e-3 * abs(expected_float))
-        except (ValueError, IndexError):
-            pass
+        # GSM8K 现在是选择题格式（A/B/C/D），与 MMLU 一致
+        match = re.search(r'(?:Answer|answer|Ans|ans)[:\s]*([A-D])', generated_stripped)
+        if not match:
+            match = re.search(r'\b([A-D])\b', generated_stripped.upper())
+        if match:
+            predicted_letter = match.group(1).upper()
+            return predicted_letter == expected.upper()
         return False
 
     elif benchmark == "ifeval":
-        # IFEval: 检查生成的回答是否满足格式约束
-        # 从 sample 中获取 instruction_id（约束类型）
-        instruction_id = sample.get("instruction_id", "")
-        return _check_ifeval_constraint(instruction_id, generated_stripped)
+        # IFEval 现在是 yes/no 选择题格式（A=Yes, B=No），与 MMLU 一致
+        match = re.search(r'(?:Answer|answer|Ans|ans)[:\s]*([A-D])', generated_stripped)
+        if not match:
+            match = re.search(r'\b([A-D])\b', generated_stripped.upper())
+        if match:
+            predicted_letter = match.group(1).upper()
+            return predicted_letter == expected.upper()
+        return False
 
     elif benchmark == "mmlu":
         # 提取选项字母
@@ -318,27 +314,13 @@ def check_answer(benchmark, generated, expected, sample):
         return False
 
     elif benchmark == "triviaqa":
-        # 模糊匹配：去掉标点后检查子串匹配
-        def normalize(s):
-            return re.sub(r'[^\w\s]', '', s.lower()).strip()
-
-        norm_generated = normalize(generated_stripped)
-        norm_expected = normalize(expected_lower)
-
-        if not norm_expected:
-            return False
-
-        # 检查答案是否出现在生成中
-        if norm_expected in norm_generated:
-            return True
-
-        # 检查答案的每个词是否大部分出现
-        expected_words = set(norm_expected.split())
-        generated_words = set(norm_generated.split())
-        overlap = len(expected_words & generated_words)
-        if len(expected_words) > 0 and overlap >= len(expected_words) * 0.5:
-            return True
-
+        # TriviaQA 现在是选择题格式（A/B/C/D），与 MMLU 一致
+        match = re.search(r'(?:Answer|answer|Ans|ans)[:\s]*([A-D])', generated_stripped)
+        if not match:
+            match = re.search(r'\b([A-D])\b', generated_stripped.upper())
+        if match:
+            predicted_letter = match.group(1).upper()
+            return predicted_letter == expected.upper()
         return False
 
     else:

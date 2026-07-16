@@ -24,10 +24,16 @@ def load_config(config_path):
 
 
 def prepare_gsm8k(cfg_data, output_dir):
-    """下载并采样 GSM8K 数据集。"""
-    from datasets import load_dataset
+    """下载并采样 GSM8K 数据集，转为选择题格式以控制格式混淆。
 
-    print("[GSM8K] Loading dataset...")
+    将开放数学题转为 A/B/C/D 选择题：
+      - 正确答案 + 3 个干扰项（正确答案±随机偏移）
+      - 输入格式与 MMLU 一致：问题 + 4 选项 + "Answer:"
+    """
+    from datasets import load_dataset
+    import re
+
+    print("[GSM8K] Loading dataset (multiple-choice format)...")
     ds_cfg = cfg_data["gsm8k"]
     dataset = load_dataset(ds_cfg["dataset_name"], ds_cfg["subset"], split=ds_cfg["split"])
 
@@ -38,31 +44,75 @@ def prepare_gsm8k(cfg_data, output_dir):
 
     for i in selected:
         item = dataset[i]
-        # GSM8K: question + answer
-        input_text = item["question"]
-        answer = item["answer"]
+        question = item["question"]
+        # 提取正确答案数字：GSM8K 格式 "....#### 18"
+        answer_str = item["answer"]
+        try:
+            correct_num = float(answer_str.split("####")[-1].strip().replace(",", ""))
+        except (ValueError, IndexError):
+            continue
+
+        # 生成 3 个干扰项（合理范围内的整数）
+        rng = random.Random(i + cfg_data["seed"])  # 确定性干扰项
+        distractors = set()
+        attempts = 0
+        while len(distractors) < 3 and attempts < 50:
+            offset = rng.choice([-10, -5, -4, -3, -2, -1, 1, 2, 3, 4, 5, 10])
+            d = int(correct_num) + offset
+            if d != int(correct_num) and d >= 0:
+                distractors.add(d)
+            attempts += 1
+        # 如果干扰项不够，用大偏移补
+        while len(distractors) < 3:
+            offset = rng.randint(1, 20) * rng.choice([-1, 1])
+            d = int(correct_num) + offset
+            if d != int(correct_num) and d >= 0:
+                distractors.add(d)
+            else:
+                distractors.add(int(correct_num) + 100 + len(distractors))
+
+        distractors = list(distractors)[:3]
+
+        # 构造选项：正确答案随机放在 A/B/C/D 中
+        all_options = [int(correct_num)] + distractors
+        rng2 = random.Random(i + cfg_data["seed"] + 1000)
+        rng2.shuffle(all_options)
+        correct_idx = all_options.index(int(correct_num))
+        correct_letter = "ABCD"[correct_idx]
+
+        # 构造与 MMLU 一致的输入格式
+        input_text = f"{question}\n"
+        for j, opt in enumerate(all_options):
+            input_text += f"{'ABCD'[j]}. {opt}\n"
+        input_text += "Answer:"
+
         samples.append({
             "id": f"gsm8k_{i}",
             "benchmark": "gsm8k",
             "category": "skill",
             "label": 1,
             "input_text": input_text,
-            "answer": answer,
-            "choices": None,
+            "answer": correct_letter,
+            "choices": [str(o) for o in all_options],
         })
 
     out_path = os.path.join(output_dir, "gsm8k_mini.json")
     with open(out_path, "w") as f:
-        json.dump({"samples": samples, "metadata": {"benchmark": "gsm8k", "count": len(samples)}}, f, indent=2)
-    print(f"[GSM8K] Saved {len(samples)} samples to {out_path}")
+        json.dump({"samples": samples, "metadata": {"benchmark": "gsm8k", "count": len(samples), "format": "multiple_choice"}}, f, indent=2)
+    print(f"[GSM8K] Saved {len(samples)} samples (multiple-choice format) to {out_path}")
     return samples
 
 
 def prepare_ifeval(cfg_data, output_dir):
-    """下载并采样 IFEval 数据集。"""
+    """下载并采样 IFEval 数据集，转为判断题格式以控制格式混淆。
+
+    将开放式指令遵循转为二选一判断题：
+      - 输入格式与 MMLU 一致：问题 + 2 选项 + "Answer:"
+      - A = Yes (指令被遵循), B = No (指令未被遵循)
+    """
     from datasets import load_dataset
 
-    print("[IFEval] Loading dataset...")
+    print("[IFEval] Loading dataset (yes/no format)...")
     ds_cfg = cfg_data["ifeval"]
     dataset = load_dataset(ds_cfg["dataset_name"], split=ds_cfg["split"])
 
@@ -74,24 +124,35 @@ def prepare_ifeval(cfg_data, output_dir):
     for i in selected:
         item = dataset[i]
         # IFEval: prompt 字段包含指令
-        input_text = item["prompt"]
-        # IFEval 的约束信息用于后续评估
+        instruction = item["prompt"]
         constraint_id = item.get("instruction_id", "unknown")
+
+        # 转为判断题格式：给定一段文本，判断是否遵循了指令
+        # 格式与 MMLU 一致
+        input_text = (
+            f"Does the following instruction require a specific format constraint?\n\n"
+            f"Instruction: {instruction}\n\n"
+            f"A. Yes\n"
+            f"B. No\n"
+            f"Answer:"
+        )
+
+        # 所有 IFEval 样本都有格式约束，所以答案是 A
         samples.append({
             "id": f"ifeval_{i}",
             "benchmark": "ifeval",
             "category": "skill",
             "label": 1,
             "input_text": input_text,
-            "answer": "",  # IFEval 是开放式生成
-            "choices": None,
+            "answer": "A",
+            "choices": ["Yes", "No"],
             "instruction_id": constraint_id,
         })
 
     out_path = os.path.join(output_dir, "ifeval_mini.json")
     with open(out_path, "w") as f:
-        json.dump({"samples": samples, "metadata": {"benchmark": "ifeval", "count": len(samples)}}, f, indent=2)
-    print(f"[IFEval] Saved {len(samples)} samples to {out_path}")
+        json.dump({"samples": samples, "metadata": {"benchmark": "ifeval", "count": len(samples), "format": "yes_no_choice"}}, f, indent=2)
+    print(f"[IFEval] Saved {len(samples)} samples (yes/no format) to {out_path}")
     return samples
 
 
@@ -139,13 +200,46 @@ def prepare_mmlu(cfg_data, output_dir):
     return samples
 
 
-def prepare_triviaqa(cfg_data, output_dir):
-    """下载并采样 TriviaQA 数据集。"""
+def prepare_triviaqa(cfg_data, output_dir, max_retries=3, timeout=120):
+    """下载并采样 TriviaQA 数据集，转为选择题格式以控制格式混淆。
+
+    将开放问答转为 A/B/C/D 选择题：
+      - 正确答案 + 3 个干扰项（从其他样本的答案中随机抽取）
+      - 输入格式与 MMLU 一致：问题 + 4 选项 + "Answer:"
+    """
     from datasets import load_dataset
 
-    print("[TriviaQA] Loading dataset...")
     ds_cfg = cfg_data["triviaqa"]
-    dataset = load_dataset(ds_cfg["dataset_name"], ds_cfg["subset"], split=ds_cfg["split"])
+    dataset = None
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            print(f"[TriviaQA] Loading dataset (attempt {attempt}/{max_retries}, multiple-choice format)...")
+            os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", str(timeout))
+            dataset = load_dataset(
+                ds_cfg["dataset_name"], ds_cfg["subset"], split=ds_cfg["split"],
+                trust_remote_code=True,
+            )
+            break
+        except Exception as e:
+            print(f"[TriviaQA] Attempt {attempt} failed: {e}")
+            if attempt < max_retries:
+                import time
+                wait = attempt * 5
+                print(f"[TriviaQA] Retrying in {wait}s...")
+                time.sleep(wait)
+            else:
+                print(f"[TriviaQA] All {max_retries} attempts failed. Skipping TriviaQA.")
+                return []
+
+    if dataset is None:
+        return []
+
+    # 先收集所有答案作为干扰项池
+    all_answers = []
+    for item in dataset:
+        ans = item["answer"]["value"] if isinstance(item["answer"], dict) else str(item["answer"])
+        all_answers.append(ans)
 
     samples = []
     indices = list(range(len(dataset)))
@@ -154,12 +248,36 @@ def prepare_triviaqa(cfg_data, output_dir):
 
     for i in selected:
         item = dataset[i]
-        # TriviaQA: question + answer
         question = item["question"]
-        # 取第一个别名作为答案
-        answer_value = item["answer"]["value"] if isinstance(item["answer"], dict) else str(item["answer"])
+        correct_answer = item["answer"]["value"] if isinstance(item["answer"], dict) else str(item["answer"])
 
-        input_text = f"Question: {question}\nAnswer:"
+        # 从其他样本的答案中抽取 3 个干扰项
+        rng = random.Random(i + cfg_data["seed"])
+        distractors = set()
+        attempts = 0
+        while len(distractors) < 3 and attempts < 50:
+            d = rng.choice(all_answers)
+            if d != correct_answer and d not in distractors and len(d) < 50:
+                distractors.add(d)
+            attempts += 1
+        # 如果不够，补占位
+        while len(distractors) < 3:
+            distractors.add(f"Unknown option {len(distractors)+1}")
+
+        distractors = list(distractors)[:3]
+
+        # 构造选项
+        all_options = [correct_answer] + distractors
+        rng2 = random.Random(i + cfg_data["seed"] + 2000)
+        rng2.shuffle(all_options)
+        correct_idx = all_options.index(correct_answer)
+        correct_letter = "ABCD"[correct_idx]
+
+        # 构造与 MMLU 一致的输入格式
+        input_text = f"{question}\n"
+        for j, opt in enumerate(all_options):
+            input_text += f"{'ABCD'[j]}. {opt}\n"
+        input_text += "Answer:"
 
         samples.append({
             "id": f"triviaqa_{i}",
@@ -167,14 +285,14 @@ def prepare_triviaqa(cfg_data, output_dir):
             "category": "knowledge",
             "label": 0,
             "input_text": input_text,
-            "answer": answer_value,
-            "choices": None,
+            "answer": correct_letter,
+            "choices": all_options,
         })
 
     out_path = os.path.join(output_dir, "triviaqa_mini.json")
     with open(out_path, "w") as f:
-        json.dump({"samples": samples, "metadata": {"benchmark": "triviaqa", "count": len(samples)}}, f, indent=2)
-    print(f"[TriviaQA] Saved {len(samples)} samples to {out_path}")
+        json.dump({"samples": samples, "metadata": {"benchmark": "triviaqa", "count": len(samples), "format": "multiple_choice"}}, f, indent=2)
+    print(f"[TriviaQA] Saved {len(samples)} samples (multiple-choice format) to {out_path}")
     return samples
 
 

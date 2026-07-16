@@ -26,10 +26,18 @@ def set_seed(seed):
 def load_model_and_tokenizer(cfg_model):
     """加载 HuggingFace 模型和 tokenizer，返回 (model, tokenizer, num_layers, hidden_size)。"""
     print(f"[Model] Loading {cfg_model['name']}...")
-    tokenizer = AutoTokenizer.from_pretrained(cfg_model["name"])
+    model_name = cfg_model["name"]
+
+    # Qwen2.5 等模型需要 trust_remote_code=True
+    trust_remote = "Qwen" in model_name or "qwen" in model_name
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_name,
+        trust_remote_code=trust_remote,
+    )
     model = AutoModelForCausalLM.from_pretrained(
-        cfg_model["name"],
+        model_name,
         torch_dtype=getattr(torch, cfg_model.get("torch_dtype", "float32")),
+        trust_remote_code=trust_remote,
     )
     model.to(cfg_model.get("device", "cpu"))
     model.eval()
