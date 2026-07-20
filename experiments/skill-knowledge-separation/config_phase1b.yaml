@@ -1,0 +1,93 @@
+# =============================================================================
+# 实验2 Phase 1B: within-MMLU skill vs knowledge
+# =============================================================================
+# 目标：消除混淆源 C2/C3/C4（选项类型、内容差异、句法差异）
+# 设计：只用 MMLU 内部数据，skill=推理型科目，knowledge=记忆型科目
+# 预期：Layer 0 从 ~90-95% 降至 ~70-85%
+# =============================================================================
+
+# --- 模型配置 ---
+model:
+  name: "Qwen/Qwen2.5-3B"
+  device: "cpu"
+  torch_dtype: "float16"
+
+# --- 数据配置 ---
+data:
+  num_samples: 100                # 每类采样 100 题
+  seed: 42
+  max_input_length: 512
+  # MMLU
+  mmlu:
+    dataset_name: "cais/mmlu"
+    subset: "all"
+    split: "test"
+
+# --- Phase 1B 特有配置 ---
+phase1b:
+  samples_per_category: 100
+  skill_subjects:
+    - "abstract_algebra"
+    - "college_mathematics"
+    - "high_school_mathematics"
+    - "formal_logic"
+    - "logical_fallacies"
+    - "college_physics"
+    - "high_school_physics"
+    - "college_chemistry"
+    - "high_school_chemistry"
+    - "discrete_mathematics"
+    - "machine_learning"
+    - "econometrics"
+    - "high_school_statistics"
+  knowledge_subjects:
+    - "world_religions"
+    - "us_history"
+    - "world_history"
+    - "european_history"
+    - "high_school_geography"
+    - "nutrition"
+    - "marketing"
+    - "management"
+    - "jurisprudence"
+    - "philosophy"
+    - "sociology"
+    - "anatomy"
+    - "clinical_knowledge"
+    - "college_medicine"
+    - "global_facts"
+    - "miscellaneous"
+
+# --- 探针配置 ---
+probe:
+  type: "logistic_regression"
+  C: 1.0
+  max_iter: 1000
+  cv_folds: 5
+  test_size: 0.2
+  random_state: 42
+
+# --- 消融配置 ---
+ablation:
+  layer_selection: "best_probe"
+  strength: 50.0
+  eval_batch_size: 8
+
+# --- 实验流程控制 ---
+experiment:
+  run_exp0: true
+  run_exp1: false               # Phase 1B 只跑探针，不跑消融
+  skip_if_exists: false
+
+# --- 输出配置 ---
+output:
+  results_dir: "results/phase1b"  # 独立子目录
+  save_hidden_states: true
+  save_predictions: true
+
+# --- 数据文件路径 ---
+data_file: "data/mmlu_within.json"
+
+# --- 放弃条件 ---
+abort_criteria:
+  exp0_min_accuracy: 0.60

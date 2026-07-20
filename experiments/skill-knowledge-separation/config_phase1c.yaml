@@ -1,0 +1,73 @@
+# =============================================================================
+# 实验2 Phase 1C: within-MMLU 纯文本科目
+# =============================================================================
+# 目标：消除 subject 级别内容混淆——只用纯文本、无数字/公式科目
+# 设计：formal_logic/logical_fallacies (skill) vs philosophy/world_religions/jurisprudence (knowledge)
+# 预期：Layer 0 降至 ~50-65%；若中高层仍 >75%，则为功能性分离信号
+# 决策：go/no-go 关卡
+# =============================================================================
+
+# --- 模型配置 ---
+model:
+  name: "Qwen/Qwen2.5-3B"
+  device: "cpu"
+  torch_dtype: "float16"
+
+# --- 数据配置 ---
+data:
+  num_samples: 80                 # 纯文本科目题量有限，每类 80 题
+  seed: 42
+  max_input_length: 512
+  # MMLU
+  mmlu:
+    dataset_name: "cais/mmlu"
+    subset: "all"
+    split: "test"
+
+# --- Phase 1C 特有配置 ---
+phase1c:
+  samples_per_category: 80
+  skill_subjects:
+    - "formal_logic"
+    - "logical_fallacies"
+  knowledge_subjects:
+    - "philosophy"
+    - "world_religions"
+    - "jurisprudence"
+
+# --- 探针配置 ---
+probe:
+  type: "logistic_regression"
+  C: 1.0
+  max_iter: 1000
+  cv_folds: 5
+  test_size: 0.2
+  random_state: 42
+
+# --- 消融配置 ---
+ablation:
+  layer_selection: "best_probe"
+  strength: 50.0
+  eval_batch_size: 8
+
+# --- 实验流程控制 ---
+experiment:
+  run_exp0: true
+  run_exp1: false               # Phase 1C 只跑探针，go/no-go 后再决定是否跑消融
+  skip_if_exists: false
+
+# --- 输出配置 ---
+output:
+  results_dir: "results/phase1c"  # 独立子目录
+  save_hidden_states: true
+  save_predictions: true
+
+# --- 数据文件路径 ---
+data_file: "data/mmlu_text_only.json"
+
+# --- 放弃条件 ---
+abort_criteria:
+  exp0_min_accuracy: 0.60
+  # Phase 1C 专用 go/no-go 条件
+  phase1c_high_layer_threshold: 0.75   # 中高层（>50%深度）>75% = go
+  phase1c_all_layer_threshold: 0.65    # 所有层 <65% = no-go (H2 证伪)
