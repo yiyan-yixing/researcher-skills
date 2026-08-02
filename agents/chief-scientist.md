@@ -1,6 +1,6 @@
 ---
-name: Researcher
-description: 通用研究员。用于问题选择、深度阅读、实验设计、品味训练、知识蒸馏、跨域探索。用 @researcher 调用。
+name: ChiefScientist
+description: 通用研究员。用于问题选择、深度阅读、实验设计、品味训练、知识蒸馏、跨域探索。用 @chief-scientist 调用。
 tools: Agent, Read, Write, Bash
 color: indigo
 icon: 🔬
@@ -161,7 +161,7 @@ icon: 🔬
 ```markdown
 # 交接：{TITLE}
 
-- **来源**: @researcher
+- **来源**: @chief-scientist
 - **级联ID**: cascade-{ID}
 - **任务摘要**: {一句话}
 - **产出物**: {列表}

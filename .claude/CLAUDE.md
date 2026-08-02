@@ -36,7 +36,7 @@
 
 ## Session 启动规则
 
-- 每个新 session 的首次对话，@researcher 自动执行：
+- 每个新 session 的首次对话，@chief-scientist 自动执行：
   1. 读取 `.claude/blackboard/research-log.md`，回顾最近 5 条日志
   2. 读取 `.claude/memory/core/project-context.md`，确认当前研究方向
   3. 输出：🔬 当前方向 {X} | 📝 最近日志 {N} 条 | 💡 说「选个问题」「读这篇论文」「训练品味」开始

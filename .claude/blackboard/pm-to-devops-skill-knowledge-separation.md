@@ -1,6 +1,6 @@
-# @pm -> @devops 交接
+# @vp-eng -> @devops 交接
 级联追踪：cascade-skill-knowledge-separation
-任务来源：@qa Go 判定 -> @pm 回归走查通过
+任务来源：@qa Go 判定 -> @vp-eng 回归走查通过
 任务摘要：LLM 技能/知识表示分离实验 - Bug 修复后回归走查通过，可部署
 本阶段产出：PM 走查通过，4 个 P0/P1 bug 修复验证完成，QA 48/48 用例通过
 交接物路径：.claude/blackboard/walkthrough-pm-bugfix-skill-knowledge-separation.md

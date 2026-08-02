@@ -10,7 +10,7 @@
 
 | 角色 | 调用 | 职责 |
 |------|------|------|
-| 研究员 Researcher | `@researcher` | 问题选择、深度阅读、实验设计、品味训练、知识蒸馏、跨域探索 |
+| 研究员 Researcher | `@chief-scientist` | 问题选择、深度阅读、实验设计、品味训练、知识蒸馏、跨域探索 |
 
 ## 技能一览
 
@@ -47,7 +47,7 @@ RESEARCHER_NAME=张三 RESEARCH_FIELD=NLP bash init.sh
 
 ```
 your-project/.claude/
-├── agents/researcher.md       # @researcher 角色
+├── agents/researcher.md       # @chief-scientist 角色
 ├── skills/                    # 10 个研究技能
 ├── memory/core/               # 自动加载的记忆
 ├── blackboard/                # 共享状态（研究日志/决策/问题）
@@ -102,29 +102,29 @@ done
 然后在 `CLAUDE.md` 的技能路由中添加：
 
 ```markdown
-- 研究选题 / 方向评估 → @researcher 或 research-problem-pick
-- 深度阅读论文 → @researcher 或 research-literature-deep-read
-- 实验设计 / 快速验证 → @researcher 或 research-experiment-shrink
-- 失败分析 / Bad case → @researcher 或 research-failure-autopsy
-- 品味训练 / 预测校准 → @researcher 或 research-taste-train
-- 知识蒸馏 / 公开写作 → @researcher 或 research-public-distill
-- 跨领域探索 → @researcher 或 research-cross-field-explore
+- 研究选题 / 方向评估 → @chief-scientist 或 research-problem-pick
+- 深度阅读论文 → @chief-scientist 或 research-literature-deep-read
+- 实验设计 / 快速验证 → @chief-scientist 或 research-experiment-shrink
+- 失败分析 / Bad case → @chief-scientist 或 research-failure-autopsy
+- 品味训练 / 预测校准 → @chief-scientist 或 research-taste-train
+- 知识蒸馏 / 公开写作 → @chief-scientist 或 research-public-distill
+- 跨领域探索 → @chief-scientist 或 research-cross-field-explore
 - 研究日志 / 信念更新 → research-log
 ```
 
 ## 使用方式
 
-### 方式 A：通过 @researcher 角色调用
+### 方式 A：通过 @chief-scientist 角色调用
 
 直接在 Claude Code 对话中说：
 
 ```
-@researcher 帮我评估一下这个研究方向值不值得做
-@researcher 我要读这篇论文 https://arxiv.org/abs/xxxx.xxxxx
-@researcher 训练一下品味
+@chief-scientist 帮我评估一下这个研究方向值不值得做
+@chief-scientist 我要读这篇论文 https://arxiv.org/abs/xxxx.xxxxx
+@chief-scientist 训练一下品味
 ```
 
-@researcher 会自动判断该用哪个技能，并按技能定义的步骤执行。
+@chief-scientist 会自动判断该用哪个技能，并按技能定义的步骤执行。
 
 ### 方式 B：直接触发技能关键词
 
@@ -148,9 +148,9 @@ done
 ### 场景 1：开始一个新研究方向
 
 ```
-你：@researcher 我想研究 LLM 的长上下文推理，帮我评估这个方向
+你：@chief-scientist 我想研究 LLM 的长上下文推理，帮我评估这个方向
 
-@researcher 会执行：
+@chief-scientist 会执行：
 1. 委托子 Agent 搜索该领域开放问题
 2. 对每个候选做 Hamming 审查（5 维度打分）
 3. Schulman 反推——从想要的结果倒推实验路径
@@ -161,9 +161,9 @@ done
 ### 场景 2：读一篇新论文
 
 ```
-你：@researcher 读这篇论文 https://arxiv.org/abs/2407.xxxxx
+你：@chief-scientist 读这篇论文 https://arxiv.org/abs/2407.xxxxx
 
-@researcher 会执行：
+@chief-scientist 会执行：
 1. 先让你写下预测（品味训练！）
 2. 委托子 Agent 提取全文（含附录）
 3. 反直觉阅读顺序：Limitations → Appendix → Method → Results → Intro
@@ -174,9 +174,9 @@ done
 ### 场景 3：设计实验
 
 ```
-你：@researcher 帮我设计实验验证这个假设：增加中间层 attention 会提升推理链长度
+你：@chief-scientist 帮我设计实验验证这个假设：增加中间层 attention 会提升推理链长度
 
-@researcher 会执行：
+@chief-scientist 会执行：
 1. 先写预期：假设成立/错误分别应该看到什么
 2. Shannon 缩小：单 batch → 最小模型 → 最少步数
 3. Karpathy 单 batch 检查：能过拟合吗？
@@ -188,9 +188,9 @@ done
 ### 场景 4：分析失败案例
 
 ```
-你：@researcher 分析这次实验为什么效果不好，日志在 outputs/failed/
+你：@chief-scientist 分析这次实验为什么效果不好，日志在 outputs/failed/
 
-@researcher 会执行：
+@chief-scientist 会执行：
 1. 拉出 ≥ 20 个失败案例
 2. 委托子 Agent 批量分类
 3. 找到最大堆——这才是你要解决的问题
@@ -203,7 +203,7 @@ done
 ```
 你：训练品味
 
-@researcher 会执行：
+@chief-scientist 会执行：
 1. 选训练目标（论文预测/实验预测/重要性预测）
 2. 写下预测 + 置信度
 3. 执行/阅读
@@ -215,7 +215,7 @@ done
 
 | 仪式 | 频率 | 触发方式 |
 |------|------|----------|
-| 📖 论文深读 | 每天 | `@researcher 读这篇论文` |
+| 📖 论文深读 | 每天 | `@chief-scientist 读这篇论文` |
 | 🎯 品味预测 | 每天 | `训练品味` |
 | 📝 研究日志 | 每天 | `记个日志` |
 | 🔍 失败尸检 | 每次实验后 | `分析失败` |
@@ -256,7 +256,7 @@ done
 | 🚫 不要 | ✅ 要 |
 |----------|--------|
 | 跳过"预期"字段——写不出 = 还没想清楚 | 每条假设都要可证伪 |
-| 读摘要代替原文——附录是埋尸体的地方 | 委托子 Agent 做搜索，@researcher 只做判断 |
+| 读摘要代替原文——附录是埋尸体的地方 | 委托子 Agent 做搜索，@chief-scientist 只做判断 |
 | 追潮流——千人竞赛你起步晚+算力少 | 工程是头等研究活动 |
 | 忽视失败——Darwin 规则：记忆删除不方便的证据 | 记录负面结果和正面结果一样详细 |
 

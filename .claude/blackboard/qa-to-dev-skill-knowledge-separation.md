@@ -1,6 +1,6 @@
 # @qa -> @dev 交接
 级联追踪：cascade-skill-knowledge-separation
-任务来源：@pm(走查通过) -> @qa(质量把关)
+任务来源：@vp-eng(走查通过) -> @qa(质量把关)
 本阶段判定：No-Go
 交接物路径：.claude/blackboard/qa-report-skill-knowledge-separation.md
 下游输入要求：修复 P0 bug 后，QA 重新验证

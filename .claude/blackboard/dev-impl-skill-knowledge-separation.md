@@ -1,6 +1,6 @@
-# @dev -> @pm 交接
+# @dev -> @vp-eng 交接
 级联追踪：cascade-skill-knowledge-separation
-任务来源：@researcher
+任务来源：@chief-scientist
 任务摘要：实现 LLM 技能/知识表示分离验证实验代码
 
 ## 本阶段产出

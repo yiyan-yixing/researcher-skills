@@ -1,6 +1,6 @@
 # @qa 质量把关报告
 级联追踪：cascade-skill-knowledge-separation
-任务来源：@pm(走查通过) -> @qa
+任务来源：@vp-eng(走查通过) -> @qa
 判定：No-Go（P0 bug 需修复）
 回退轮数：1/2
 
