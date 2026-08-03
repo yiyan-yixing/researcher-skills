@@ -1,5 +1,5 @@
 ---
-name: "Research Log / 研究日志"
+name: "research-log"
 description: "记录研究日志——假设/设置/预期/结果/信念更新。对抗自我欺骗的第一道防线。当用户说'记个日志''记录实验''更新信念''今天做了什么'时触发。"
 when_to_use: "每次实验/假设变更/信念更新时触发。频次：每天，时间盒：10min"
 allowed-tools:

@@ -1,5 +1,5 @@
 ---
-name: "Research Experiment Shrink / 实验精简"
+name: "research-experiment-shrink"
 description: "缩小实验到便宜可验证——先过单batch，缩小到几乎平凡，然后逐步恢复难度。当用户说'设计实验''验证假设''怎么快速测''最小实验'时触发。"
 when_to_use: "设计实验/缩小验证/快速测试时触发。频次：on-demand，时间盒：20min"
 allowed-tools:

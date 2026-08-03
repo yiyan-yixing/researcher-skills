@@ -1,5 +1,5 @@
 ---
-name: "Research Literature Deep Read / 论文深度阅读"
+name: "research-literature-deep-read"
 description: "深度阅读论文原文——读原文不看摘要，附录优先，限制章节是最诚实的段落。当用户说'读这篇论文''帮我理解这篇文章''论文笔记'时触发。确保不读二手总结，直击原文。"
 when_to_use: "读论文/技术报告/预印本时触发。频次：每天，时间盒：30min"
 allowed-tools:

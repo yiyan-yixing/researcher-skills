@@ -1,5 +1,5 @@
 ---
-name: "Research Public Distill / 公共蒸馏"
+name: "research-public-distill"
 description: "公开写作知识蒸馏——写清楚的解释是真正的贡献，不是服务性工作。公开写作是最强凭证，因为它是不可伪造的思维样本。当用户说'写篇文章''解释清楚''蒸馏知识''公开分享'时触发。"
 when_to_use: "每月公共写作/知识蒸馏/解释复杂概念时触发。频次：每月，时间盒：60min"
 allowed-tools:

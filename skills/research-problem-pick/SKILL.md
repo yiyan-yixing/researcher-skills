@@ -1,5 +1,5 @@
 ---
-name: "Research Problem Pick / 研究问题选择"
+name: "research-problem-pick"
 description: "选择值得研究的真问题。不吸收别人的问题，选择你真正想存在的结果并反推实验路径。当用户说'选个问题''评估方向''这个问题值得做吗''选题'时触发。"
 when_to_use: "选择研究方向/评估问题价值/选题时触发。频次：on-demand，时间盒：45min"
 allowed-tools:

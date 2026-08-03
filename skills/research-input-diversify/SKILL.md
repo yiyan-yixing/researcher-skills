@@ -1,5 +1,5 @@
 ---
-name: "Research Input Diversify / 信息源升级"
+name: "research-input-diversify"
 description: "升级信息输入——读旧文献，跨领域借镜，读原文不看二手总结，打破信息茧房。当用户说'信息茧房''信息源不够''拓宽视野''不知道读什么'时触发。"
 when_to_use: "信息源审计/升级/拓宽时触发。频次：每周，时间盒：30min"
 allowed-tools:

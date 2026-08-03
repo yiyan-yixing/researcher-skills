@@ -1,5 +1,5 @@
 ---
-name: "Research Cross Field Explore / 跨域有目的漫游"
+name: "research-cross-field-explore"
 description: "有目的地跨领域探索——你的第一个子领域是时间的巧合，在决定定居之前，先在几个领域交学费。当用户说'探索其他领域''跨领域迁移''还能用在哪''看看相邻领域'时触发。"
 when_to_use: "季度跨领域探索/寻找迁移机会/子领域饱和时触发。频次：每季度，时间盒：45min"
 allowed-tools:

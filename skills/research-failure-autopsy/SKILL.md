@@ -1,5 +1,5 @@
 ---
-name: "Research Failure Autopsy / 失败尸检"
+name: "research-failure-autopsy"
 description: "失败案例批量分析——拉百个失败，分类，攻最大堆。loss 下降不等于分析，transcript 里才有真相。当用户说'分析失败''为什么失败''错误模式''看看bad case'时触发。"
 when_to_use: "实验完成后/分析失败案例/错误模式分析时触发。频次：每次实验后，时间盒：30min"
 allowed-tools:

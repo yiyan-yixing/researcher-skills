@@ -1,5 +1,5 @@
 ---
-name: "Research Taste Train / 品味训练"
+name: "research-taste-train"
 description: "训练研究品味——预测实验结果/论文影响/两年后重要性，然后校准。品味不是天赋，是可以刻意训练的肌肉。当用户说'训练品味''预测一下''猜结果''校准判断'时触发。"
 when_to_use: "每日论文阅读前/实验运行前/评估方向时触发。频次：每天，时间盒：15min"
 allowed-tools:

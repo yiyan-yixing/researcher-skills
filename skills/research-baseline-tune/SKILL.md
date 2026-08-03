@@ -1,5 +1,5 @@
 ---
-name: "Research Baseline Tune / 基线调优与消融"
+name: "research-baseline-tune"
 description: "基线调优到痛处，消融找核心组件——ML 墓地里满是消散在适当调优基线上的增益。当用户说'调基线''消融实验''找核心组件''这个增益是真的吗'时触发。"
 when_to_use: "验证增益真实性/消融实验/基线调优时触发。频次：on-demand，时间盒：45min"
 allowed-tools:
