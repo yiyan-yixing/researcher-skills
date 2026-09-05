@@ -26,5 +26,7 @@
 | 技能 | 触发 | 时间盒 |
 |------|------|--------|
 | `research-public-distill` | 公开写作/蒸馏 | 60min |
+| `research-arxiv-publish` | 发论文/投稿arXiv | 120min |
 | `research-baseline-tune` | 基线调优/消融 | 45min |
 | `research-cross-field-explore` | 跨领域探索 | 45min |
+| `research-daily-scan` | 每日前沿扫描 | 30min |

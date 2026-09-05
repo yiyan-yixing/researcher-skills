@@ -1,6 +1,6 @@
 # Researcher Skills / 研究员技能包
 
-通用研究员 Agent 技能包——基于 "How to Be Good at Research" 提炼的 8 大核心原则，拆解为 **1 个角色 + 10 个可训练技能**。
+通用研究员 Agent 技能包——基于 "How to Be Good at Research" 提炼的 8 大核心原则，拆解为 **2 个角色 + 12 个可训练技能**。
 
 ## 核心理念
 
@@ -11,6 +11,7 @@
 | 角色 | 调用 | 职责 |
 |------|------|------|
 | 研究员 Researcher | `@chief-scientist` | 问题选择、深度阅读、实验设计、品味训练、知识蒸馏、跨域探索 |
+| 学术院长 / 博士生导师 | `@head-of-research-academy` | 大模型博士+研究员培养课程治课与守门：资格考/开题/答辩主考 + 世界级对标审查（学员-主考分离，不碰研究生产） |
 
 ## 技能一览
 
@@ -24,6 +25,8 @@
 | `research-failure-autopsy` | Stare at the outputs | 分析失败案例/错误模式 | 30min |
 | `research-taste-train` | Pick your own problems + Upgrade | 品味训练/预测结果/校准判断 | 15min |
 | `research-public-distill` | Write everything down | 公开写作/知识蒸馏/解释复杂概念 | 60min |
+| `research-arxiv-publish` | Write everything down + The long game | 发论文/投稿arXiv/论文自动发布 | 120min |
+| `research-daily-scan` | Upgrade your inputs | 每日前沿扫描（AI/量化/产品/跨域） | 30min |
 | `research-baseline-tune` | Wander on purpose | 基线调优/消融实验/找核心组件 | 45min |
 | `research-cross-field-explore` | Wander on purpose | 跨领域探索/寻找迁移机会 | 45min |
 
@@ -47,8 +50,9 @@ RESEARCHER_NAME=张三 RESEARCH_FIELD=NLP bash init.sh
 
 ```
 your-project/.claude/
-├── agents/researcher.md       # @chief-scientist 角色
-├── skills/                    # 10 个研究技能
+├── agents/chief-scientist.md     # @chief-scientist 角色
+├── agents/head-of-research-academy.md  # @head-of-research-academy 角色（学术院长）
+├── skills/                    # 12 个研究技能
 ├── memory/core/               # 自动加载的记忆
 ├── blackboard/                # 共享状态（研究日志/决策/问题）
 ├── evals/                     # 评估框架
@@ -80,10 +84,10 @@ your-project/.claude/
 如果你的项目已有 `.claude/` 目录（已装其他技能包），可以安全合并安装：
 
 ```bash
-# Agent
-cp researcher-skills/agents/researcher.md /your-project/.claude/agents/
+# Agent（2 个：@chief-scientist + @head-of-research-academy）
+cp researcher-skills/agents/*.md /your-project/.claude/agents/
 
-# 技能（10 个）
+# 技能（12 个）
 cp -r researcher-skills/skills/research-* /your-project/.claude/skills/
 
 # Blackboard（不覆盖已有）
